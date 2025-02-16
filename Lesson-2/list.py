@@ -13,3 +13,4 @@ for name in names:
 for i in range(len(names)):
     print(i+1, end=". ")
     print(names[i])
+    
