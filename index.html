@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Interactive Music EDA – Hits vs Flops</title>
+    <!-- Plotly for charts -->
+    <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+    <!-- PapaParse for CSV parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+    <style>
+      :root {
+        --bg: #0b0f17;
+        --card: #111827;
+        --muted: #9ca3af;
+        --text: #e5e7eb;
+        --primary: #60a5fa;
+        --accent: #34d399;
+        --warn: #f59e0b;
+        --radius: 16px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI,
+          Roboto, Helvetica, Arial, 'Apple Color Emoji', 'Segoe UI Emoji';
+      }
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        background: linear-gradient(180deg, #0b0f17, rgba(11, 15, 23, 0.6));
+        backdrop-filter: saturate(120%) blur(6px);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 16px 20px;
+      }
+      .row {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .title {
+        font-weight: 700;
+        font-size: 20px;
+        letter-spacing: 0.3px;
+      }
+      .pill {
+        padding: 6px 10px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 999px;
+        color: var(--muted);
+      }
+      .toolbar {
+        margin-left: auto;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+      }
+      .btn {
+        background: #1f2937;
+        color: #e5e7eb;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        padding: 8px 12px;
+        border-radius: 10px;
+        cursor: pointer;
+        transition: 0.2s;
+      }
+      .btn:hover {
+        transform: translateY(-1px);
+        border-color: rgba(255, 255, 255, 0.18);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        gap: 16px;
+        padding: 18px;
+      }
+      .col {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: var(--radius);
+        padding: 14px;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+      }
+      .card h3 {
+        margin: 0 0 10px 0;
+        font-size: 14px;
+        color: #cbd5e1;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+      }
+      .chart {
+        height: 280px;
+      }
+      .info {
+        font-size: 13px;
+        color: #cbd5e1;
+        line-height: 1.45;
+      }
+      .info .k {
+        color: var(--muted);
+      }
+      .chips {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 8px;
+      }
+      .chip {
+        font-size: 12px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        color: #cbd5e1;
+      }
+
+      /* Modal */
+      .modal {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.7);
+        display: none;
+        place-items: center;
+        z-index: 10;
+      }
+      .modal.open {
+        display: grid;
+      }
+      .modal-card {
+        display: grid;
+        grid-template-columns: 1fr 320px;
+        gap: 16px;
+        max-width: 1200px;
+        width: 95vw;
+        max-height: 90vh;
+      }
+      .modal-body {
+        background: var(--card);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: var(--radius);
+        padding: 12px;
+        overflow: hidden;
+      }
+      .modal-side {
+        background: #0f172a;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: var(--radius);
+        padding: 14px;
+        overflow: auto;
+      }
+      .modal-title {
+        margin: 0 0 8px 0;
+        font-weight: 700;
+      }
+      .meta {
+        font-size: 13px;
+        color: #cbd5e1;
+      }
+      .close {
+        position: absolute;
+        top: 14px;
+        right: 16px;
+        background: #111827;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 10px;
+        color: #e5e7eb;
+        padding: 6px 10px;
+        cursor: pointer;
+      }
+
+      /* Responsive */
+      @media (max-width: 980px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        .modal-card {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="container row">
+        <div class="title">Interactive Music EDA – Hits vs Flops</div>
+        <span class="pill">Click chart → mở rộng & tương tác</span>
+        <div class="toolbar">
+          <label class="btn" for="csvInput">📁 Tải CSV</label>
+          <input id="csvInput" type="file" accept=".csv" hidden />
+          <button class="btn" id="useDemo">Dùng demo</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="grid">
+      <!-- LEFT: Info & Controls -->
+      <div class="col">
+        <section class="card info">
+          <h3>Thông tin chung</h3>
+          <div id="datasetInfo">
+            Chưa có dữ liệu. Hãy
+            <b>Tải CSV</b>
+            hoặc dùng
+            <b>demo</b>
+            .
+          </div>
+          <div class="chips" id="featureChips"></div>
+        </section>
+
+        <section class="card info">
+          <h3>Chú thích</h3>
+          <div>
+            <div class="chip">target: 1 = hit, 0 = flop</div>
+            <p class="meta">
+              Double‑click để phóng to. Hover để xem chi tiết. Trong chế độ mở
+              rộng, bên phải sẽ hiển thị thông tin điểm/cột/ô bạn đang chọn.
+            </p>
+          </div>
+        </section>
+      </div>
+
+      <!-- RIGHT: Charts -->
+      <div class="col">
+        <section class="card">
+          <h3>A. Phân bố target</h3>
+          <div id="chartTarget" class="chart"></div>
+        </section>
+
+        <section class="card">
+          <h3>B. Heatmap tương quan</h3>
+          <div id="chartHeatmap" class="chart" style="height: 420px"></div>
+        </section>
+
+        <section class="card">
+          <h3>C. Feature Importance (proxy)</h3>
+          <div id="chartFI" class="chart"></div>
+          <div class="meta">
+            *Proxy = sắp xếp theo |corr(feature, target)| để hiển thị nhanh
+            trong trình duyệt.
+          </div>
+        </section>
+
+        <section class="card">
+          <h3>D. Boxplot theo target</h3>
+          <div id="chartBox" class="chart"></div>
+          <div class="row" style="gap: 8px; margin-top: 8px">
+            <select id="boxFeature" class="btn" style="padding: 8px 10px">
+              <option value="danceability">danceability</option>
+              <option value="energy">energy</option>
+              <option value="acousticness">acousticness</option>
+              <option value="valence">valence</option>
+              <option value="tempo">tempo</option>
+              <option value="instrumentalness">instrumentalness</option>
+              <option value="loudness">loudness</option>
+              <option value="speechiness">speechiness</option>
+            </select>
+            <button id="btnUpdateBox" class="btn">Cập nhật</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <h3>E. Pairplot (SPlom)</h3>
+          <div id="chartPair" class="chart" style="height: 720px"></div>
+        </section>
+      </div>
+    </main>
+
+    <!-- Modal (enlarged) -->
+    <div class="modal" id="modal">
+      <div class="modal-card">
+        <button class="close" id="closeModal">Đóng</button>
+        <div class="modal-body">
+          <div id="modalChart" style="width: 100%; height: 100%"></div>
+        </div>
+        <aside class="modal-side">
+          <h3 class="modal-title" id="modalTitle">Chi tiết</h3>
+          <div id="modalInfo" class="meta">
+            Chọn một phần tử trên biểu đồ để xem thông tin…
+          </div>
+        </aside>
+      </div>
+    </div>
+
+    <script>
+      // ---------- Utilities ----------
+      const NUM_FEATURES_DEFAULT = [
+        'danceability',
+        'energy',
+        'loudness',
+        'speechiness',
+        'acousticness',
+        'instrumentalness',
+        'liveness',
+        'valence',
+        'tempo',
+        'duration_ms',
+        'time_signature',
+        'chorus_hit',
+        'sections',
+      ];
+
+      let raw = []; // full rows
+      let X = {}; // feature arrays map
+      let y = []; // target array
+      let features = []; // numeric feature names
+
+      const el = (id) => document.getElementById(id);
+
+      function describeDataset() {
+        const n = raw.length;
+        if (!n) {
+          el('datasetInfo').innerHTML = 'Chưa có dữ liệu.';
+          return;
+        }
+        const pos = y.filter((v) => +v === 1).length;
+        const neg = y.filter((v) => +v === 0).length;
+        el('datasetInfo').innerHTML =
+          `Số mẫu: <b>${n}</b> — Hit (1): <b>${pos}</b> • Flop (0): <b>${neg}</b><br>` +
+          `Trường số: ${features.length}. Bỏ qua: track, artist, uri.`;
+      }
+
+      function computeCorr(xArr, yArr) {
+        const n = xArr.length;
+        const mx = xArr.reduce((a, b) => a + +b, 0) / n;
+        const my = yArr.reduce((a, b) => a + +b, 0) / n;
+        let num = 0,
+          dx = 0,
+          dy = 0;
+        for (let i = 0; i < n; i++) {
+          const xr = +xArr[i] - mx;
+          const yr = +yArr[i] - my;
+          num += xr * yr;
+          dx += xr * xr;
+          dy += yr * yr;
+        }
+        return dx * dy === 0 ? 0 : num / Math.sqrt(dx * dy);
+      }
+
+      function corrMatrix(dataMap) {
+        const names = [...features, 'target'];
+        const M = names.map(() => Array(names.length).fill(0));
+        for (let i = 0; i < names.length; i++) {
+          for (let j = 0; j < names.length; j++) {
+            const a = names[i] === 'target' ? y : dataMap[names[i]];
+            const b = names[j] === 'target' ? y : dataMap[names[j]];
+            M[i][j] = computeCorr(a, b);
+          }
+        }
+        return { names, M };
+      }
+
+      function buildFeatureChips() {
+        const wrap = el('featureChips');
+        wrap.innerHTML = '';
+        features.forEach((f) => {
+          const d = document.createElement('div');
+          d.className = 'chip';
+          d.textContent = f;
+          wrap.appendChild(d);
+        });
+      }
+
+      // ---------- Charts (small) ----------
+      function renderTarget() {
+        const pos = y.filter((v) => +v === 1).length;
+        const neg = y.filter((v) => +v === 0).length;
+        Plotly.newPlot(
+          'chartTarget',
+          [
+            {
+              x: ['0', '1'],
+              y: [neg, pos],
+              type: 'bar',
+              hovertemplate: 'Target=%{x}<br>Số lượng=%{y}<extra></extra>',
+            },
+          ],
+          {
+            margin: { t: 10, l: 40, r: 10, b: 40 },
+            plot_bgcolor: '#111827',
+            paper_bgcolor: '#111827',
+            font: { color: '#e5e7eb' },
+          },
+          { displayModeBar: false }
+        );
+        attachExpand('chartTarget', 'Phân bố target');
+      }
+
+      function renderHeatmap() {
+        const { names, M } = corrMatrix(X);
+        const z = M;
+        Plotly.newPlot(
+          'chartHeatmap',
+          [
+            {
+              z,
+              x: names,
+              y: names,
+              type: 'heatmap',
+              colorscale: 'RdBu',
+              zmid: 0,
+              hovertemplate: '%{y} × %{x}<br>corr=%{z:.2f}<extra></extra>',
+            },
+          ],
+          {
+            margin: { t: 30, l: 80, r: 10, b: 80 },
+            plot_bgcolor: '#111827',
+            paper_bgcolor: '#111827',
+            font: { color: '#e5e7eb' },
+            title: '',
+          },
+          { displayModeBar: false }
+        );
+        attachExpand('chartHeatmap', 'Heatmap tương quan');
+      }
+
+      function renderFeatureImportance() {
+        // proxy by |corr(feature,target)| for in-browser, fast
+        const rows = features.map((f) => ({
+          f,
+          imp: Math.abs(computeCorr(X[f], y)),
+        }));
+        rows.sort((a, b) => b.imp - a.imp);
+        const top = rows.slice(0, Math.min(rows.length, 20));
+        Plotly.newPlot(
+          'chartFI',
+          [
+            {
+              x: top.map((r) => r.imp),
+              y: top.map((r) => r.f),
+              type: 'bar',
+              orientation: 'h',
+              hovertemplate: '%{y}: %{x:.3f}<extra></extra>',
+            },
+          ],
+          {
+            margin: { t: 10, l: 120, r: 20, b: 40 },
+            plot_bgcolor: '#111827',
+            paper_bgcolor: '#111827',
+            font: { color: '#e5e7eb' },
+          },
+          { displayModeBar: false }
+        );
+        attachExpand('chartFI', 'Feature Importance (proxy)');
+      }
+
+      function renderBox(feature) {
+        // group by target 0/1
+        const g0 = [],
+          g1 = [];
+        for (let i = 0; i < y.length; i++) {
+          const val = +X[feature][i];
+          if (+y[i] === 0) g0.push(val);
+          else g1.push(val);
+        }
+        const data = [
+          {
+            y: g0,
+            type: 'box',
+            name: '0',
+            boxpoints: 'outliers',
+            jitter: 0.3,
+            pointpos: 0,
+            hovertemplate:
+              'target=0<br>' + feature + '=%{y:.3f}<extra></extra>',
+          },
+          {
+            y: g1,
+            type: 'box',
+            name: '1',
+            boxpoints: 'outliers',
+            jitter: 0.3,
+            pointpos: 0,
+            hovertemplate:
+              'target=1<br>' + feature + '=%{y:.3f}<extra></extra>',
+          },
+        ];
+        Plotly.newPlot(
+          'chartBox',
+          data,
+          {
+            margin: { t: 10, l: 40, r: 10, b: 40 },
+            plot_bgcolor: '#111827',
+            paper_bgcolor: '#111827',
+            font: { color: '#e5e7eb' },
+          },
+          { displayModeBar: false }
+        );
+        attachExpand('chartBox', `Phân bố ${feature} theo target`, data);
+      }
+
+      function renderPair() {
+        const cols = [
+          'danceability',
+          'instrumentalness',
+          'energy',
+          'valence',
+          'tempo',
+        ];
+        const pick = cols.filter((c) => features.includes(c));
+        const dims = pick.map((c) => ({
+          label: c,
+          values: X[c].map((v) => +v),
+        }));
+        const color = y.map((v) => (v == 1 ? 1 : 0));
+        Plotly.newPlot(
+          'chartPair',
+          [
+            {
+              type: 'splom',
+              dimensions: dims,
+              text: y.map(String),
+              marker: { size: 4, opacity: 0.7 },
+              hovertemplate:
+                '%{text} • %{xaxis.title.text}=%{x:.3f}<br>%{yaxis.title.text}=%{y:.3f}<extra></extra>',
+            },
+          ],
+          {
+            margin: { t: 30, l: 30, r: 10, b: 30 },
+            plot_bgcolor: '#111827',
+            paper_bgcolor: '#111827',
+            font: { color: '#e5e7eb' },
+          },
+          { displayModeBar: false }
+        );
+        attachExpand('chartPair', 'Pairplot (SPlom)');
+      }
+
+      // ---------- Modal expand logic ----------
+      let currentFigure = null;
+      function attachExpand(divId, title, dataOverride) {
+        const div = el(divId);
+        div.style.cursor = 'zoom-in';
+        div.ondblclick = () => openModalFrom(divId, title, dataOverride);
+      }
+
+      function openModalFrom(divId, title, dataOverride) {
+        const src = document.getElementById(divId);
+        const fig = src ? src._fullLayout._plotlyGraphDiv || src : src;
+        const gd = src; // original graph div
+        const modal = el('modal');
+        modal.classList.add('open');
+        el('modalTitle').textContent = title;
+        el('modalInfo').innerHTML = 'Chọn một phần tử để xem chi tiết…';
+
+        // Build a new figure inside modal with same data+layout
+        const d = dataOverride || gd.data;
+        const layout = Object.assign({}, gd.layout || {}, {
+          paper_bgcolor: '#111827',
+          plot_bgcolor: '#111827',
+          font: { color: '#e5e7eb' },
+          margin: { t: 40, l: 60, r: 20, b: 50 },
+        });
+        Plotly.newPlot('modalChart', JSON.parse(JSON.stringify(d)), layout, {
+          responsive: true,
+        });
+
+        const modalChart = el('modalChart');
+        modalChart.on('plotly_hover', (ev) => {
+          const pt = ev.points?.[0];
+          if (!pt) return;
+          el('modalInfo').innerHTML =
+            `<b>Hover</b><br>Trace: ${
+              pt.fullData.name || pt.data.name || '—'
+            }<br>` +
+            (pt.x !== undefined ? `x: <b>${fmt(pt.x)}</b><br>` : '') +
+            (pt.y !== undefined ? `y: <b>${fmt(pt.y)}</b><br>` : '') +
+            (pt.z !== undefined ? `z: <b>${fmt(pt.z)}</b><br>` : '');
+        });
+        modalChart.on('plotly_click', (ev) => {
+          const pt = ev.points?.[0];
+          if (!pt) return;
+          el('modalInfo').innerHTML =
+            `<b>Selected</b><br>Trace: ${
+              pt.fullData.name || pt.data.name || '—'
+            }<br>` +
+            (pt.x !== undefined ? `x: <b>${fmt(pt.x)}</b><br>` : '') +
+            (pt.y !== undefined ? `y: <b>${fmt(pt.y)}</b><br>` : '') +
+            (pt.z !== undefined ? `z: <b>${fmt(pt.z)}</b><br>` : '') +
+            (pt.customdata ? `<br>${JSON.stringify(pt.customdata)}` : '');
+        });
+
+        currentFigure = { divId, title };
+      }
+
+      function fmt(v) {
+        if (typeof v === 'number') {
+          return Math.abs(v) > 1000 ? v.toFixed(0) : v.toFixed(3);
+        }
+        return v;
+      }
+
+      el('closeModal').onclick = () => {
+        el('modal').classList.remove('open');
+      };
+
+      // ---------- Data ingest ----------
+      function fromRows(rows) {
+        raw = rows.filter((r) => r.target !== undefined && r.target !== '');
+        // Coerce numeric
+        const drop = new Set(['track', 'artist', 'uri']);
+        const cols = Object.keys(raw[0] || {});
+        features = cols
+          .filter((c) => !drop.has(c) && c !== 'target')
+          .filter((c) => !isNaN(+raw[0][c]));
+
+        X = {};
+        features.forEach((f) => (X[f] = raw.map((r) => +r[f])));
+        y = raw.map((r) => +r.target);
+
+        describeDataset();
+        buildFeatureChips();
+        // Render all
+        renderTarget();
+        renderHeatmap();
+        renderFeatureImportance();
+        renderBox(
+          features.find((f) => NUM_FEATURES_DEFAULT.includes(f)) || features[0]
+        );
+        renderPair();
+      }
+
+      function loadCSVFile(file) {
+        Papa.parse(file, {
+          header: true,
+          skipEmptyLines: true,
+          complete: (res) => {
+            if (!res.data || !res.data.length) {
+              alert('CSV rỗng');
+              return;
+            }
+            fromRows(res.data);
+          },
+        });
+      }
+
+      el('csvInput').addEventListener('change', (e) => {
+        const f = e.target.files?.[0];
+        if (f) loadCSVFile(f);
+      });
+
+      // Demo data (tiny subset + synthetic to show charts immediately)
+      const demoCSV = `track,artist,uri,danceability,energy,key,loudness,mode,speechiness,acousticness,instrumentalness,liveness,valence,tempo,duration_ms,time_signature,chorus_hit,sections,target\nWild Things,Alessia Cara,spotify:...,0.741,0.626,1,-4.826,0,0.0886,0.02,0,0.0828,0.706,108.029,188493,4,41.18681,10,1\nSurfboard,Esquivel!,spotify:...,0.447,0.247,5,-14.661,0,0.0346,0.871,0.814,0.0946,0.25,155.489,176880,3,33.18083,9,0\nSong A,Artist A,spotify:...,0.68,0.75,2,-6.0,1,0.12,0.08,0.02,0.09,0.62,120,200000,4,40,11,1\nSong B,Artist B,spotify:...,0.35,0.30,9,-12.0,0,0.06,0.70,0.60,0.20,0.18,102,210000,4,50,8,0\nSong C,Artist C,spotify:...,0.72,0.80,4,-5.0,1,0.08,0.10,0.01,0.07,0.65,128,190000,4,38,12,1\nSong D,Artist D,spotify:...,0.40,0.40,7,-10.0,0,0.04,0.60,0.55,0.30,0.22,98,230000,3,55,9,0\n`;
+
+      function useDemo() {
+        Papa.parse(demoCSV, {
+          header: true,
+          skipEmptyLines: true,
+          complete: (res) => fromRows(res.data),
+        });
+      }
+      el('useDemo').onclick = useDemo;
+
+      // Initial demo for instant preview
+      useDemo();
+
+      // Update Boxplot feature
+      el('btnUpdateBox').onclick = () => {
+        const f = el('boxFeature').value;
+        renderBox(f);
+      };
+    </script>
+  </body>
+</html>
