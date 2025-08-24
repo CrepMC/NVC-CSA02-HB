@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Ranking & Pairplot từ CSV</title>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.plot.ly/plotly-2.26.0.min.js"></script>
+  <style>
+    body{background:#0b0f14;color:#e8eef5;font-family:sans-serif;margin:0;padding:20px}
+    .title{font-size:22px;font-weight:700;margin-bottom:8px}
+    .card{background:#111821;padding:16px;border-radius:16px;margin-bottom:20px;border:1px solid #223042}
+    input[type=file]{background:#0d141d;color:#e8eef5;padding:6px;border-radius:8px}
+    #charts{display:grid;grid-template-columns:1fr;gap:20px}
+    #ranking{width:100%;height:600px}
+    #pairplot{width:100%;height:800px}
+  </style>
+</head>
+<body>
+  <div class="title">📊 Phân tích Feature vs Target</div>
+  <div class="card">
+    <label><strong>CSV:</strong></label>
+    <input type="file" id="csv" accept=".csv" />
+  </div>
+
+  <div id="charts">
+    <div class="card">
+      <h3>Bảng xếp hạng độ tương quan tuyệt đối</h3>
+      <div id="ranking"></div>
+      <div class="explain">
+        🔎 <strong>Giải thích:</strong><br>
+        - Biểu đồ hiển thị mức độ tương quan (Pearson) giữa từng feature và biến <code>target</code>.<br>
+        - Giá trị càng gần 1 nghĩa là mối liên hệ càng mạnh, gần 0 là yếu.<br>
+        - Ở đây ta lấy <em>giá trị tuyệt đối</em> để xếp hạng, nên không phân biệt tương quan âm hay dương.<br>
+        - Các feature top đầu có tiềm năng phân biệt rõ hơn giữa target=0 và target=1.
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Pairplot top 5 feature với Target</h3>
+      <div id="pairplot"></div>
+      <div class="explain">
+        🔎 <strong>Giải thích:</strong><br>
+        - Mỗi ô scatter thể hiện mối quan hệ giữa 2 feature trong top 5.<br>
+        - Màu sắc: đỏ = target=1, xanh = target=0.<br>
+        - Nếu hai nhóm màu phân tách rõ (ít chồng chéo), feature đó có ích trong phân loại.<br>
+        - Đường chéo chính hiển thị phân phối của từng feature riêng biệt.
+      </div>
+    </div>
+  </div>
+
+<script>
+let rows=[];
+
+document.getElementById('csv').addEventListener('change',e=>{
+  const file=e.target.files[0];
+  if(!file) return;
+  Papa.parse(file,{
+    header:true,dynamicTyping:true,skipEmptyLines:true,
+    complete: res=>{
+      rows=res.data;
+      buildCharts();
+    }
+  });
+});
+
+function buildCharts(){
+  if(!rows.length) return;
+  const headers=Object.keys(rows[0]);
+  if(!headers.includes("target")){alert("CSV cần có cột 'target'");return;}
+  const features=headers.filter(h=>h!=="target" && typeof rows[0][h]==="number");
+
+  // tính correlation với target
+  const corrs=[];
+  for(const f of features){
+    const xs=[], ys=[];
+    for(const r of rows){
+      if(Number.isFinite(r[f]) && Number.isFinite(r["target"])){
+        xs.push(r[f]); ys.push(r["target"]);
+      }
+    }
+    if(xs.length>1){
+      const corr=pearson(xs,ys);
+      corrs.push({feature:f, value:Math.abs(corr)});
+    }
+  }
+  corrs.sort((a,b)=>b.value-a.value);
+
+  // bar chart
+  Plotly.newPlot("ranking",[{
+    x:corrs.map(c=>c.value),
+    y:corrs.map(c=>c.feature),
+    type:"bar",orientation:"h",
+    marker:{color:corrs.map(c=>c.value),colorscale:"Viridis"}
+  }],{
+    title:"Bảng xếp hạng độ tương quan các feature với target",
+    xaxis:{title:"Độ tương quan tuyệt đối"},
+    yaxis:{title:"Feature"}
+  },{responsive:true});
+
+  // lấy top 5
+  const top5=corrs.slice(0,5).map(c=>c.feature);
+  makePairplot(top5);
+}
+
+function makePairplot(cols){
+  const target=rows.map(r=>r["target"]);
+  const colors=target.map(t=> t===1 ? "red" : "blue");
+
+  const data=cols.map(c=>{
+    return rows.map(r=>r[c]);
+  });
+
+  const trace={
+    type:'splom',
+    dimensions:cols.map((c,i)=>({label:c,values:data[i]})),
+    text: target.map(t=>"target="+t),
+    marker:{color:colors,size:6,opacity:0.7}
+  };
+
+  Plotly.newPlot('pairplot',[trace],{
+    title:"Pairplot top 5 feature với target",
+    height:800
+  });
+}
+
+// Pearson correlation
+function pearson(x,y){
+  const n=x.length;
+  const meanX=x.reduce((a,b)=>a+b,0)/n;
+  const meanY=y.reduce((a,b)=>a+b,0)/n;
+  let num=0, den1=0, den2=0;
+  for(let i=0;i<n;i++){
+    const dx=x[i]-meanX, dy=y[i]-meanY;
+    num+=dx*dy; den1+=dx*dx; den2+=dy*dy;
+  }
+  return num/Math.sqrt(den1*den2);
+}
+</script>
+</body>
+</html>

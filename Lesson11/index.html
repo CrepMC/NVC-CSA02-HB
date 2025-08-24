@@ -1,0 +1,978 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Trang Tổng Quan Biểu Đồ Tương Tác</title>
+
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Chart.js library and plugins -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-matrix@2.0.1/dist/chartjs-chart-matrix.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-boxplot@4.4.0/dist/chartjs-chart-boxplot.min.js"></script>
+
+    <style>
+      body {
+        font-family: 'Inter', sans-serif;
+        backgroundColor: 'rgba(75, 192, 192, 0.5)';
+        ground-color: #f1f5f9;
+      }
+      .chart-card {
+        transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+        cursor: pointer;
+      }
+      .chart-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1),
+          0 4px 6px -4px rgb(0 0 0 / 0.1);
+      }
+      #modal {
+        transition: opacity 0.3s ease;
+      }
+      .custom-file-button input[type='file'] {
+        display: none;
+      }
+      .chart-tooltip {
+        position: absolute;
+        background: rgba(0, 0, 0, 0.8);
+        color: white;
+        border-radius: 3px;
+        padding: 5px;
+        pointer-events: none;
+        font-size: 12px;
+        z-index: 100;
+      }
+      .pairplot-grid {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 2px;
+      }
+      .pairplot-cell {
+        aspect-ratio: 1;
+        position: relative;
+      }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body class="p-4 sm:p-6 md:p-8">
+    <div class="container mx-auto">
+      <header class="text-center mb-8">
+        <h1 class="text-3xl sm:text-4xl font-bold text-slate-800">
+          Tổng Quan Biểu Đồ Phân Tích Dữ Liệu
+        </h1>
+        <p class="text-slate-600 mt-2">
+          Nhấp đúp vào một biểu đồ để xem chi tiết và tương tác.
+        </p>
+
+        <div class="mt-6 flex justify-center items-center gap-4">
+          <div class="custom-file-button">
+            <label
+              for="csv-file-input"
+              class="bg-blue-500 text-white font-bold py-2 px-4 rounded-lg shadow-md hover:bg-blue-600 transition-colors cursor-pointer"
+            >
+              Chọn tệp CSV
+            </label>
+            <input type="file" id="csv-file-input" accept=".csv" />
+          </div>
+          <span id="file-status" class="text-slate-500">
+            Chưa có tệp nào được chọn.
+          </span>
+        </div>
+      </header>
+
+      <div
+        id="charts-grid"
+        class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
+      >
+        <!-- Chart cards will be injected here by JavaScript -->
+      </div>
+    </div>
+
+    <!-- Modal -->
+    <div
+      id="modal"
+      class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50 hidden"
+    >
+      <div
+        class="bg-white rounded-lg shadow-2xl w-full max-w-6xl h-full max-h-[90vh] flex flex-col md:flex-row overflow-hidden"
+      >
+        <div
+          class="w-full md:w-2/3 p-6 flex-grow flex items-center justify-center"
+        >
+          <canvas id="modal-chart"></canvas>
+          <div id="modal-pairplot" class="pairplot-grid hidden"></div>
+        </div>
+        <div class="w-full md:w-1/3 bg-slate-50 p-6 overflow-y-auto">
+          <div class="flex justify-between items-center mb-4">
+            <h2 id="modal-title" class="text-2xl font-bold text-slate-800">
+              Chi tiết
+            </h2>
+            <button
+              id="close-modal"
+              class="text-slate-500 hover:text-slate-800 text-4xl leading-none"
+            >
+              &times;
+            </button>
+          </div>
+          <div id="modal-controls" class="mb-4"></div>
+          <p id="modal-description" class="text-slate-600 text-base"></p>
+          <div id="modal-details" class="mt-4"></div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Use window.onload to ensure all scripts are loaded before execution
+      window.onload = () => {
+        // Register BoxPlot controller
+        if (Chart.BoxPlotController) {
+          Chart.register(Chart.BoxPlotController, Chart.BoxPlotElement);
+        }
+
+        // --- GLOBAL STATE ---
+        let currentData = [];
+        let featureNames = [];
+        let numericFeatures = [];
+        let chartInstances = {};
+        let modalChartInstance = null;
+
+        // --- UI ELEMENTS ---
+        const chartsGrid = document.getElementById('charts-grid');
+        const modal = document.getElementById('modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalDescription = document.getElementById('modal-description');
+        const modalControls = document.getElementById('modal-controls');
+        const modalDetails = document.getElementById('modal-details');
+        const closeModalBtn = document.getElementById('close-modal');
+        const modalChartCanvas = document.getElementById('modal-chart');
+        const modalPairplot = document.getElementById('modal-pairplot');
+        const fileInput = document.getElementById('csv-file-input');
+        const fileStatus = document.getElementById('file-status');
+
+        // --- HELPER FUNCTIONS ---
+
+        // Calculates the Pearson correlation coefficient between two arrays of numbers.
+        const getCorrelation = (x, y) => {
+          let sumX = 0,
+            sumY = 0,
+            sumXY = 0,
+            sumX2 = 0,
+            sumY2 = 0;
+          const n = x.length;
+          for (let i = 0; i < n; i++) {
+            sumX += x[i];
+            sumY += y[i];
+            sumXY += x[i] * y[i];
+            sumX2 += x[i] * x[i];
+            sumY2 += y[i] * y[i];
+          }
+          const numerator = n * sumXY - sumX * sumY;
+          const denominator = Math.sqrt(
+            (n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY)
+          );
+          if (denominator === 0) return 0;
+          return numerator / denominator;
+        };
+
+        // Get min and max values for scaling
+        const getMinMax = (arr) => {
+          return {
+            min: Math.min(...arr),
+            max: Math.max(...arr),
+          };
+        };
+
+        // Normalize value to 0-1 range
+        const normalize = (value, min, max) => {
+          return (value - min) / (max - min);
+        };
+
+        // --- CHART CONFIGURATIONS ---
+        const chartConfigs = [
+          {
+            id: 'target-distribution',
+            requiredColumns: ['target'],
+            title: 'A. Phân bố Target',
+            type: 'bar',
+            description:
+              'Biểu đồ này hiển thị số lượng mẫu cho mỗi loại target. Điều này giúp kiểm tra sự cân bằng của dữ liệu.',
+            getData: (data) => {
+              const counts = data.reduce((acc, row) => {
+                acc[row.target] = (acc[row.target] || 0) + 1;
+                return acc;
+              }, {});
+              const labels = Object.keys(counts).sort();
+              return {
+                labels: labels.map((l) => `Target ${l}`),
+                datasets: [
+                  {
+                    label: 'Số lượng mẫu',
+                    data: labels.map((l) => counts[l]),
+                    backgroundColor: [
+                      'rgba(54, 162, 235, 0.6)',
+                      'rgba(255, 99, 132, 0.6)',
+                    ],
+                    borderColor: [
+                      'rgba(54, 162, 235, 1)',
+                      'rgba(255, 99, 132, 1)',
+                    ],
+                    borderWidth: 1,
+                  },
+                ],
+              };
+            },
+            getOptions: (isModal = false) => ({
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: { display: false },
+                title: { display: true, text: isModal ? 'Phân bố Target' : '' },
+                tooltip: {
+                  callbacks: {
+                    label: (context) => {
+                      return `${context.dataset.label}: ${context.parsed.y}`;
+                    },
+                  },
+                },
+              },
+              scales: {
+                y: {
+                  beginAtZero: true,
+                  title: { display: true, text: 'Số lượng mẫu' },
+                },
+                x: { title: { display: true, text: 'Target' } },
+              },
+            }),
+          },
+          {
+            id: 'correlation-heatmap',
+            requiredColumns: [], // Will use all numeric features
+            title: 'B. Heatmap Tương Quan',
+            type: 'matrix',
+            description:
+              'Heatmap này cho thấy mối tương quan Pearson giữa tất cả các feature dạng số. Màu đỏ đậm (gần +1) biểu thị tương quan dương mạnh, màu xanh đậm (gần -1) biểu thị tương quan âm mạnh.',
+            getData: (data) => {
+              // Include target in correlation calculation
+              const allNumericFeatures = [...numericFeatures];
+              if (
+                featureNames.includes('target') &&
+                !numericFeatures.includes('target')
+              ) {
+                allNumericFeatures.push('target');
+              }
+
+              const matrixData = allNumericFeatures.map((f1) => {
+                return allNumericFeatures.map((f2) => {
+                  const col1 = data.map((row) => row[f1]);
+                  const col2 = data.map((row) => row[f2]);
+                  return getCorrelation(col1, col2);
+                });
+              });
+              return {
+                datasets: [
+                  {
+                    label: 'Heatmap Tương Quan',
+                    data: matrixData.flatMap((row, i) =>
+                      row.map((val, j) => ({
+                        x: allNumericFeatures[j],
+                        y: allNumericFeatures[i],
+                        v: val,
+                      }))
+                    ),
+                    backgroundColor: (ctx) => {
+                      const value = ctx.dataset.data[ctx.dataIndex]; // lấy trực tiếp số
+                      const alpha = ctx.active ? 1 : 0.85;
+                      if (value === null || isNaN(value))
+                        return `rgba(200, 200, 200, ${alpha})`;
+                      // Coolwarm colormap logic
+                      const r =
+                        value > 0
+                          ? 211 + value * (255 - 211)
+                          : 59 + (1 + value) * (211 - 59);
+                      const g =
+                        value > 0
+                          ? 109 - value * (109 - 80)
+                          : 104 + (1 + value) * (180 - 104);
+                      const b = value > 0 ? 80 - value * (80 - 67) : 239;
+                      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+                    },
+                    width: ({ chart }) => {
+                      if (!chart.chartArea) return 0;
+                      return (
+                        chart.chartArea.width / allNumericFeatures.length - 1
+                      );
+                    },
+                    height: ({ chart }) => {
+                      if (!chart.chartArea) return 0;
+                      return (
+                        chart.chartArea.height / allNumericFeatures.length - 1
+                      );
+                    },
+                  },
+                ],
+              };
+            },
+            getOptions: (isModal = false) => ({
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: { display: false },
+                title: {
+                  display: true,
+                  text: isModal ? 'Heatmap tương quan giữa các feature' : '',
+                },
+                tooltip: {
+                  callbacks: {
+                    title: () => '',
+                    label: (ctx) => {
+                      const item = ctx.dataset.data[ctx.dataIndex];
+                      return `${item.y} vs ${item.x}: ${item.v.toFixed(2)}`;
+                    },
+                  },
+                },
+              },
+              scales: {
+                x: {
+                  type: 'category',
+                  labels: [...numericFeatures, 'target'],
+                  ticks: { autoSkip: false, maxRotation: 90, minRotation: 90 },
+                },
+                y: {
+                  type: 'category',
+                  labels: [...numericFeatures, 'target'],
+                  offset: true,
+                  ticks: { autoSkip: false },
+                },
+              },
+            }),
+          },
+          {
+            id: 'feature-importance',
+            requiredColumns: [], // Uses all features except target
+            title: 'C. Mức độ quan trọng của Feature',
+            type: 'bar',
+            description:
+              'Biểu đồ này xếp hạng các feature dựa trên mức độ quan trọng của chúng (giả lập). Feature ở trên cùng là quan trọng nhất.',
+            getData: (data) => {
+              const importances = featureNames
+                .filter((name) => name !== 'target')
+                .map((name) => ({
+                  feature: name,
+                  importance: Math.random(),
+                }))
+                .sort((a, b) => b.importance - a.importance);
+              return {
+                labels: importances.map((d) => d.feature),
+                datasets: [
+                  {
+                    label: 'Mức độ quan trọng',
+                    data: importances.map((d) => d.importance),
+                    backgroundColor: 'rgba(75, 192, 192, 0.6)',
+                    borderColor: 'rgba(75, 192, 192, 1)',
+                    borderWidth: 1,
+                  },
+                ],
+              };
+            },
+            getOptions: (isModal = false) => ({
+              indexAxis: 'y',
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: { display: false },
+                title: {
+                  display: true,
+                  text: isModal ? 'Feature Importance (Random Forest)' : '',
+                },
+                tooltip: {
+                  callbacks: {
+                    label: (context) => {
+                      return `${
+                        context.dataset.label
+                      }: ${context.parsed.x.toFixed(3)}`;
+                    },
+                  },
+                },
+              },
+              scales: {
+                x: { title: { display: true, text: 'Mức độ quan trọng' } },
+              },
+            }),
+          },
+          // --- Dynamic BoxPlot and ScatterPlot Generators ---
+          ...[
+            'danceability',
+            'energy',
+            'acousticness',
+            'valence',
+            'tempo',
+            'instrumentalness',
+          ].map((feature) => ({
+            id: `boxplot-${feature}`,
+            requiredColumns: ['target', feature],
+            title: `D. Phân bố ${feature}`,
+            type: 'boxplot',
+            description: `Biểu đồ hộp này so sánh sự phân bố của feature "${feature}" giữa các nhóm target.`,
+            getData: (data) => {
+              const dataByTarget = data.reduce((acc, row) => {
+                const targetVal = row.target;
+                if (!acc[targetVal]) acc[targetVal] = [];
+                acc[targetVal].push(row[feature]);
+                return acc;
+              }, {});
+              const labels = Object.keys(dataByTarget).sort();
+              return {
+                labels: labels.map((l) => `Target ${l}`),
+                datasets: [
+                  {
+                    label: `Phân bố ${feature}`,
+                    data: labels.map((l) => dataByTarget[l]),
+                    backgroundColor: [
+                      'rgba(153, 102, 255, 0.6)',
+                      'rgba(255, 159, 64, 0.6)',
+                    ],
+                    borderColor: [
+                      'rgba(153, 102, 255, 1)',
+                      'rgba(255, 159, 64, 1)',
+                    ],
+                    borderWidth: 1,
+                  },
+                ],
+              };
+            },
+            getOptions: (isModal = false) => ({
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: { display: false },
+                title: {
+                  display: true,
+                  text: isModal ? `Phân bố ${feature} theo Target` : '',
+                },
+                tooltip: {
+                  callbacks: {
+                    label: (context) => {
+                      return `${context.dataset.label}: ${context.parsed.y}`;
+                    },
+                  },
+                },
+              },
+              scales: {
+                y: { title: { display: true, text: feature } },
+                x: { title: { display: true, text: 'Target' } },
+              },
+            }),
+          })),
+          {
+            id: 'scatter-energy-danceability',
+            requiredColumns: ['target', 'energy', 'danceability'],
+            title: 'E. Scatter: Energy vs Danceability',
+            type: 'scatter',
+            description:
+              'Biểu đồ scatter này thể hiện mối quan hệ giữa "Energy" và "Danceability". Mỗi điểm là một mẫu dữ liệu, được tô màu theo target.',
+            getData: (data) => {
+              const dataByTarget = data.reduce((acc, row) => {
+                const targetVal = row.target;
+                if (!acc[targetVal]) acc[targetVal] = [];
+                acc[targetVal].push({ x: row.danceability, y: row.energy });
+                return acc;
+              }, {});
+              const labels = Object.keys(dataByTarget).sort();
+              return {
+                datasets: labels.map((label) => ({
+                  label: `Target ${label}`,
+                  data: dataByTarget[label],
+                  backgroundColor:
+                    label == '0'
+                      ? 'rgba(54, 162, 235, 0.7)'
+                      : 'rgba(255, 99, 132, 0.7)',
+                })),
+              };
+            },
+            getOptions: (isModal = false) => ({
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                title: {
+                  display: true,
+                  text: isModal ? 'Scatter Plot: Danceability vs Energy' : '',
+                },
+                legend: { position: 'top' },
+                tooltip: {
+                  callbacks: {
+                    label: (context) => {
+                      return `${
+                        context.dataset.label
+                      }: (${context.parsed.x.toFixed(
+                        2
+                      )}, ${context.parsed.y.toFixed(2)})`;
+                    },
+                  },
+                },
+              },
+              scales: {
+                x: { title: { display: true, text: 'Danceability' } },
+                y: { title: { display: true, text: 'Energy' } },
+              },
+            }),
+          },
+          {
+            id: 'pairplot',
+            requiredColumns: [
+              'target',
+              'danceability',
+              'energy',
+              'acousticness',
+              'valence',
+              'tempo',
+              'instrumentalness',
+            ],
+            title: 'F. Pairplot các feature',
+            type: 'pairplot',
+            description:
+              'Biểu đồ pairplot thể hiện mối quan hệ giữa các feature với nhau, được phân loại theo target.',
+            getData: (data) => {
+              // This is a custom chart type, so we return the raw data
+              return data;
+            },
+            getOptions: (isModal = false) => ({
+              responsive: true,
+              plugins: {
+                title: {
+                  display: true,
+                  text: isModal ? 'Pairplot các feature và target' : '',
+                },
+              },
+            }),
+          },
+        ];
+
+        // --- CORE LOGIC ---
+        function parseCSV(text) {
+          const lines = text.trim().split('\n');
+          const headers = lines[0].split(',');
+
+          const labels = [];
+          const data = [];
+
+          for (let i = 1; i < lines.length; i++) {
+            const row = lines[i].split(',');
+            labels.push(row[0]); // cột đầu: tên bài hát
+            data.push(Number(row[2])); // cột plays (chuyển sang số)
+          }
+
+          return {
+            labels,
+            datasets: [
+              {
+                label: 'Plays',
+                data,
+                backgroundColor: 'rgba(75, 192, 192, 0.5)',
+              },
+            ],
+          };
+        }
+
+        function handleFileUpload(event) {
+          const file = event.target.files[0];
+          if (!file) return;
+
+          const reader = new FileReader();
+          reader.onload = function (e) {
+            const text = e.target.result;
+            const jsonData = parseCSV(text); // parse CSV thành dữ liệu Chart.js
+            renderAllCharts(jsonData);
+          };
+          reader.readAsText(file);
+        }
+
+        window.onload = function () {
+          document
+            .getElementById('fileInput')
+            .addEventListener('change', handleFileUpload);
+        };
+
+        function handleFileUpload(event) {
+          const file = event.target.files[0];
+          if (!file) return;
+
+          const reader = new FileReader();
+          reader.onload = function (e) {
+            try {
+              const text = e.target.result;
+              const jsonData = parseCSV(text); // đổi JSON.parse → parseCSV
+
+              // Kiểm tra dữ liệu có hợp lệ không
+              if (!jsonData || !jsonData.labels || !jsonData.datasets) {
+                console.error('File CSV không đúng định dạng cần cho Chart.js');
+                return;
+              }
+
+              // Clear chart cũ trước khi vẽ lại
+              if (window.myChart) {
+                window.myChart.destroy();
+              }
+
+              renderAllCharts(jsonData);
+            } catch (err) {
+              console.error('Lỗi khi đọc file CSV:', err);
+            }
+          };
+          reader.readAsText(file);
+        }
+
+        const renderAllCharts = (data) => {
+          Object.values(chartInstances).forEach((chart) => chart.destroy());
+          chartInstances = {};
+          chartsGrid.innerHTML = '';
+
+          if (data.length === 0) {
+            chartsGrid.innerHTML =
+              '<p class="text-slate-500 col-span-full text-center">Vui lòng tải lên một tệp CSV để bắt đầu.</p>';
+            return;
+          }
+
+          chartConfigs.forEach((config) => {
+            const hasAllColumns = config.requiredColumns.every((col) =>
+              featureNames.includes(col)
+            );
+            if (!hasAllColumns && config.requiredColumns.length > 0) return;
+
+            const card = document.createElement('div');
+            card.className = 'chart-card bg-white p-4 rounded-lg shadow-md';
+            card.dataset.chartId = config.id;
+            card.innerHTML = `
+                        <h3 class="text-center font-semibold text-slate-700 mb-2">${config.title}</h3>
+                        <div class="relative h-64">`;
+
+            if (config.type === 'pairplot') {
+              // For pairplot, we create a grid of small charts
+              card.innerHTML += `<div class="pairplot-grid">`;
+              const features = [
+                'danceability',
+                'energy',
+                'acousticness',
+                'valence',
+                'tempo',
+                'target',
+              ];
+              for (let i = 0; i < features.length; i++) {
+                for (let j = 0; j < features.length; j++) {
+                  card.innerHTML += `<div class="pairplot-cell" data-row="${i}" data-col="${j}"></div>`;
+                }
+              }
+              card.innerHTML += `</div>`;
+            } else {
+              card.innerHTML += `<canvas></canvas>`;
+            }
+            card.innerHTML += `</div>`;
+            chartsGrid.appendChild(card);
+
+            if (config.type !== 'pairplot') {
+              const canvas = card.querySelector('canvas');
+              const chartData = config.getData(data);
+              chartInstances[config.id] = new Chart(canvas, {
+                type: config.type,
+                data: chartData,
+                options: config.getOptions(false),
+              });
+            } else {
+              // Render pairplot
+              renderPairplot(card, data);
+            }
+          });
+        };
+
+        const renderPairplot = (card, data) => {
+          const grid = card.querySelector('.pairplot-grid');
+          const features = [
+            'danceability',
+            'energy',
+            'acousticness',
+            'valence',
+            'tempo',
+            'target',
+          ];
+          const cells = grid.querySelectorAll('.pairplot-cell');
+
+          // Sample data if too large
+          let sampleData = data;
+          if (data.length > 200) {
+            // Simple sampling - take every nth element
+            const step = Math.ceil(data.length / 200);
+            sampleData = [];
+            for (let i = 0; i < data.length; i += step) {
+              sampleData.push(data[i]);
+            }
+          }
+
+          cells.forEach((cell) => {
+            const row = parseInt(cell.dataset.row);
+            const col = parseInt(cell.dataset.col);
+            const featureX = features[col];
+            const featureY = features[row];
+
+            if (row === col) {
+              // Diagonal - histogram
+              renderHistogram(cell, sampleData, featureX);
+            } else {
+              // Off-diagonal - scatter plot
+              renderScatter(cell, sampleData, featureX, featureY);
+            }
+          });
+        };
+
+        const renderHistogram = (container, data, feature) => {
+          container.innerHTML = '';
+          const canvas = document.createElement('canvas');
+          container.appendChild(canvas);
+
+          // Group data by target
+          const dataByTarget = data.reduce((acc, row) => {
+            const targetVal = row.target;
+            if (!acc[targetVal]) acc[targetVal] = [];
+            acc[targetVal].push(row[feature]);
+            return acc;
+          }, {});
+
+          // Create simple histogram
+          const ctx = canvas.getContext('2d');
+          canvas.width = container.clientWidth;
+          canvas.height = container.clientHeight;
+
+          const labels = Object.keys(dataByTarget).sort();
+          const colors = {
+            0: 'rgba(54, 162, 235, 0.7)',
+            1: 'rgba(255, 99, 132, 0.7)',
+          };
+
+          // Draw simple bars
+          const barWidth = canvas.width / (labels.length * 3);
+          labels.forEach((label, i) => {
+            const values = dataByTarget[label];
+            const count = values.length;
+            const maxHeight = canvas.height - 20;
+            const barHeight = (count / data.length) * maxHeight;
+            const x =
+              (i + 1) * (canvas.width / (labels.length + 1)) - barWidth / 2;
+            const y = canvas.height - barHeight - 10;
+
+            ctx.fillStyle = colors[label] || 'rgba(75, 192, 192, 0.7)';
+            ctx.fillRect(x, y, barWidth, barHeight);
+          });
+        };
+
+        const renderScatter = (container, data, featureX, featureY) => {
+          container.innerHTML = '';
+          const canvas = document.createElement('canvas');
+          container.appendChild(canvas);
+
+          const ctx = canvas.getContext('2d');
+          canvas.width = container.clientWidth;
+          canvas.height = container.clientHeight;
+
+          // Get min/max for scaling
+          const xValues = data.map((row) => row[featureX]);
+          const yValues = data.map((row) => row[featureY]);
+          const xRange = getMinMax(xValues);
+          const yRange = getMinMax(yValues);
+
+          const colors = {
+            0: 'rgba(54, 162, 235, 0.7)',
+            1: 'rgba(255, 99, 132, 0.7)',
+          };
+
+          // Draw points
+          data.forEach((row) => {
+            const x =
+              normalize(row[featureX], xRange.min, xRange.max) * canvas.width;
+            const y =
+              canvas.height -
+              normalize(row[featureY], yRange.min, yRange.max) * canvas.height;
+            const color = colors[row.target] || 'rgba(75, 192, 192, 0.7)';
+
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(x, y, 2, 0, Math.PI * 2);
+            ctx.fill();
+          });
+        };
+
+        // --- MODAL RENDERING ---
+
+        const renderModalPairplot = (data) => {
+          modalChartCanvas.classList.add('hidden');
+          modalPairplot.classList.remove('hidden');
+          modalPairplot.innerHTML = '';
+
+          const features = [
+            'danceability',
+            'energy',
+            'acousticness',
+            'valence',
+            'tempo',
+            'target',
+          ];
+          modalPairplot.innerHTML = `<h3 class="col-span-6 text-center font-bold mb-2">Pairplot các feature và target</h3>`;
+
+          // Sample data if too large
+          let sampleData = data;
+          if (data.length > 200) {
+            // Simple sampling - take every nth element
+            const step = Math.ceil(data.length / 200);
+            sampleData = [];
+            for (let i = 0; i < data.length; i += step) {
+              sampleData.push(data[i]);
+            }
+          }
+
+          // Create grid
+          for (let i = 0; i < features.length; i++) {
+            for (let j = 0; j < features.length; j++) {
+              const cell = document.createElement('div');
+              cell.className = 'pairplot-cell';
+              cell.dataset.row = i;
+              cell.dataset.col = j;
+              modalPairplot.appendChild(cell);
+
+              const featureX = features[j];
+              const featureY = features[i];
+
+              if (i === j) {
+                // Diagonal - histogram
+                renderHistogram(cell, sampleData, featureX);
+              } else {
+                // Off-diagonal - scatter plot
+                renderScatter(cell, sampleData, featureX, featureY);
+              }
+            }
+          }
+
+          // Add feature labels
+          const labels = document.createElement('div');
+          labels.className =
+            'col-span-6 grid grid-cols-6 text-center text-xs mt-2';
+          features.forEach((feature) => {
+            const label = document.createElement('div');
+            label.textContent = feature;
+            labels.appendChild(label);
+          });
+          modalPairplot.appendChild(labels);
+        };
+
+        // --- EVENT LISTENERS ---
+
+        fileInput.addEventListener('change', handleFileUpload);
+
+        chartsGrid.addEventListener('dblclick', (e) => {
+          const card = e.target.closest('.chart-card');
+          if (card) {
+            const chartId = card.dataset.chartId;
+            const config = chartConfigs.find((c) => c.id === chartId);
+
+            // Properly destroy the old chart instance before creating a new one
+            if (modalChartInstance) {
+              modalChartInstance.destroy();
+              modalChartInstance = null;
+            }
+
+            modalControls.innerHTML = '';
+            modalTitle.textContent = config.title;
+            modalDescription.textContent = config.description;
+            modalDetails.innerHTML = '';
+            modalChartCanvas.classList.remove('hidden');
+            modalPairplot.classList.add('hidden');
+
+            const chartData = config.getData(currentData);
+            const chartOptions = config.getOptions(true);
+
+            // Special handling for pairplot
+            if (config.type === 'pairplot') {
+              renderModalPairplot(currentData);
+            } else {
+              // Use the correct chart type
+              modalChartInstance = new Chart(modalChartCanvas, {
+                type: config.type,
+                data: chartData,
+                options: chartOptions,
+              });
+            }
+
+            // Add detailed information based on chart type
+            if (config.type === 'bar' && config.id === 'target-distribution') {
+              const counts = currentData.reduce((acc, row) => {
+                acc[row.target] = (acc[row.target] || 0) + 1;
+                return acc;
+              }, {});
+              let detailsHTML =
+                '<h3 class="font-semibold text-slate-700">Chi tiết:</h3><ul class="list-disc pl-5 mt-2">';
+              for (const [target, count] of Object.entries(counts)) {
+                detailsHTML += `<li>Target ${target}: ${count} mẫu</li>`;
+              }
+              detailsHTML += '</ul>';
+              modalDetails.innerHTML = detailsHTML;
+            } else if (config.type === 'matrix') {
+              const correlations = [];
+              const allFeatures = [...numericFeatures, 'target'];
+              allFeatures.forEach((f1) => {
+                allFeatures.forEach((f2) => {
+                  if (f1 !== f2) {
+                    const col1 = currentData.map((row) => row[f1]);
+                    const col2 = currentData.map((row) => row[f2]);
+                    const corr = getCorrelation(col1, col2);
+                    correlations.push({
+                      feature1: f1,
+                      feature2: f2,
+                      correlation: corr,
+                    });
+                  }
+                });
+              });
+              correlations.sort(
+                (a, b) => Math.abs(b.correlation) - Math.abs(a.correlation)
+              );
+              let detailsHTML =
+                '<h3 class="font-semibold text-slate-700">Hệ số tương quan cao nhất:</h3><ul class="list-disc pl-5 mt-2">';
+              for (let i = 0; i < Math.min(5, correlations.length); i++) {
+                const corr = correlations[i];
+                detailsHTML += `<li>${corr.feature1} vs ${
+                  corr.feature2
+                }: ${corr.correlation.toFixed(3)}</li>`;
+              }
+              detailsHTML += '</ul>';
+              modalDetails.innerHTML = detailsHTML;
+            } else if (config.type === 'pairplot') {
+              modalDetails.innerHTML =
+                '<h3 class="font-semibold text-slate-700">Chi tiết:</h3><p>Biểu đồ pairplot thể hiện mối quan hệ giữa các feature với nhau. Đường chéo chính thể hiện phân bố của từng feature, các ô khác thể hiện mối quan hệ giữa hai feature.</p>';
+            }
+
+            modal.classList.remove('hidden');
+          }
+        });
+
+        const closeModal = () => {
+          modal.classList.add('hidden');
+          if (modalChartInstance) {
+            modalChartInstance.destroy();
+            modalChartInstance = null;
+          }
+        };
+
+        closeModalBtn.addEventListener('click', closeModal);
+        modal.addEventListener('click', (e) => {
+          if (e.target === modal) closeModal();
+        });
+
+        // --- INITIALIZATION ---
+        renderAllCharts([]);
+      };
+    </script>
+  </body>
+</html>
