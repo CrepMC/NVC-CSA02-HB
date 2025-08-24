@@ -1,0 +1,442 @@
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Heatmap tương quan (tương tác) – Upload CSV</title>
+  <style>
+    :root{
+      --bg: #0b0f14;
+      --panel: #111821;
+      --muted: #9fb0c0;
+      --text: #e8eef5;
+      --accent: #3b82f6;
+      --border: #223042;
+      --chip: #0f1720;
+      --good: #ef4444; /* red side */
+      --bad: #3b82f6; /* blue side */
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+      background: linear-gradient(180deg, #0a0f14, #0b1219 40%, #0e141d);
+      color: var(--text);
+    }
+    .app{max-width:1200px;margin:24px auto;padding:16px 20px}
+    .title{font-size:22px;font-weight:700;letter-spacing:.2px;margin-bottom:8px}
+    .sub{color:var(--muted);font-size:13px;margin-bottom:16px}
+    .card{background:var(--panel);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.3)}
+    .controls{display:flex;flex-wrap:wrap;gap:12px;padding:14px}
+    .controls .group{display:flex;align-items:center;gap:10px;background:var(--chip);border:1px solid var(--border);border-radius:12px;padding:10px 12px}
+    .controls label{font-size:13px;color:var(--muted)}
+    input[type="file"]{color:var(--muted)}
+    select, input[type="checkbox"]{accent-color:var(--accent)}
+    select{background:#0d141d;border:1px solid var(--border);color:var(--text);padding:8px;border-radius:10px}
+    .btn{cursor:pointer;background:var(--accent);border:none;color:white;padding:10px 14px;border-radius:12px;font-weight:600}
+    .btn:disabled{opacity:.5;cursor:not-allowed}
+
+    .heatmap-wrapper{margin-top:14px}
+    .heatmap-scroller{overflow:auto;max-height:70vh;border-top:1px solid var(--border);border-bottom:1px solid var(--border);}
+    .heatmap{display:grid;gap:1px;background:var(--border);}
+    .heatmap .cell, .heatmap .head{
+      background:#0f1620; min-width:56px; min-height:34px; display:flex; align-items:center; justify-content:center;
+      border:1px solid rgba(0,0,0,.12); font-size:12px; text-align:center; padding:4px 6px;
+    }
+    .head{position:sticky; z-index:3; background:#0e1520; color:#cbd5e1; font-weight:700}
+    .head.col{top:0}
+    .head.row{left:0; justify-content:flex-start; padding-left:10px}
+    .corner{position:sticky; top:0; left:0; z-index:4; background:#0b121a; border-right:1px solid var(--border); border-bottom:1px solid var(--border)}
+
+    .cell{cursor:pointer; position:relative; color:#e9eef6; user-select:none}
+    .cell.dim{opacity:.55}
+    .cell.highlight{outline:2px solid #ffffff30; z-index:2}
+    .cell:focus{outline:2px solid var(--accent)}
+
+    .legend{display:flex; align-items:center; gap:10px; padding:10px 14px}
+    .legend-bar{height:12px; width:280px; border-radius:999px; border:1px solid var(--border);
+      background: linear-gradient(90deg, #2556b9 0%, #e0e7ef 50%, #c23a3a 100%);
+    }
+    .legend.abs .legend-bar{background: linear-gradient(90deg, #e0e7ef 0%, #c23a3a 100%);}    
+    .legend small{color:var(--muted)}
+
+    .empty{padding:28px; color:var(--muted); text-align:center}
+
+    .aside{margin-top:14px; display:grid; grid-template-columns: 1.2fr .8fr; gap:14px}
+    @media (max-width: 980px){ .aside{grid-template-columns: 1fr} }
+    .panel{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:14px}
+    .panel h3{margin:0 0 8px 0; font-size:16px}
+    .panel p{margin:6px 0; color:var(--muted); line-height:1.6}
+    .badge{display:inline-flex;gap:6px;align-items:center;border:1px solid var(--border);background:#0c131c;color:#cbd5e1;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:600}
+
+    .tooltip{position:fixed; pointer-events:none; background:#0b1118; border:1px solid var(--border); color:#eaf2ff;
+      padding:8px 10px; font-size:12px; border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,.35); z-index:50; display:none}
+    .tooltip strong{color:#fff}
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+</head>
+<body>
+  <div class="app">
+    <div class="title">Heatmap tương quan giữa các cột (tương tác)</div>
+    <div class="sub">Tải CSV (có header). App sẽ tự chọn cột số, tính Pearson r và vẽ heatmap. Di chuột để xem chi tiết, click để giải thích.</div>
+
+    <div class="card">
+      <div class="controls">
+        <div class="group">
+          <label><strong>CSV:</strong></label>
+          <input id="csv" type="file" accept=".csv" />
+        </div>
+        <div class="group">
+          <label for="target">Target (tùy chọn):</label>
+          <select id="target"><option value="">— chưa chọn —</option></select>
+        </div>
+        <div class="group">
+          <label for="abs">|r| (độ lớn tuyệt đối)</label>
+          <input id="abs" type="checkbox" />
+        </div>
+        <button id="btnExport" class="btn" disabled>Tải PNG</button>
+      </div>
+      <div class="legend" id="legend">
+        <div class="legend-bar"></div>
+        <small id="legendText">Màu xanh: âm (−1) → trắng: 0 → đỏ: dương (+1)</small>
+      </div>
+      <div class="heatmap-wrapper">
+        <div id="hmScroller" class="heatmap-scroller">
+          <div id="heatmap" class="heatmap"></div>
+        </div>
+        <div id="empty" class="empty">Chưa có dữ liệu. Hãy tải một file <strong>.csv</strong>.</div>
+      </div>
+    </div>
+
+    <div class="aside">
+      <div class="panel" id="explain">
+        <h3>Giải thích chi tiết (click vào một ô)</h3>
+        <p>• <strong>Hệ số tương quan Pearson (r)</strong> nằm trong [-1, 1]. Dương: tăng cùng chiều; Âm: ngược chiều; 0: gần như không tuyến tính.</p>
+        <p>• <strong>Độ mạnh (theo |r|)</strong>: <em>r &lt; 0.2</em> rất yếu · <em>0.2–0.4</em> yếu · <em>0.4–0.7</em> vừa · <em>&gt;= 0.7</em> mạnh.</p>
+        <p>• <strong>Lưu ý</strong>: Tương quan ≠ nhân quả; dữ liệu ngoại lệ có thể bóp méo; chỉ phản ánh <em>quan hệ tuyến tính</em>.</p>
+        <div id="pick" style="margin-top:8px"></div>
+      </div>
+      <div class="panel">
+        <h3>Cách đọc heatmap nhanh</h3>
+        <p>1) Nhìn đường chéo chính = 1 (tương quan cột với chính nó). 2) Tập trung hàng/ cột của <em>target</em> để xem biến nào liên quan mạnh. 3) Màu đậm hơn ⇒ |r| lớn hơn. 4) Ô đối xứng (i,j) = (j,i).</p>
+        <p>Nếu bật <strong>|r|</strong>: màu chỉ phản ánh độ lớn; dấu được ghi trong tooltip/ô.</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="tooltip" class="tooltip"></div>
+
+  <script>
+    const fileInput = document.getElementById('csv');
+    const heatmapEl = document.getElementById('heatmap');
+    const emptyEl = document.getElementById('empty');
+    const targetSel = document.getElementById('target');
+    const absCk = document.getElementById('abs');
+    const legendEl = document.getElementById('legend');
+    const legendText = document.getElementById('legendText');
+    const tooltip = document.getElementById('tooltip');
+    const btnExport = document.getElementById('btnExport');
+
+    let rawRows = [];
+    let numericCols = [];
+    let headers = [];
+    let corr = [];
+
+    fileInput.addEventListener('change', (e)=>{
+      const file = e.target.files[0];
+      if(!file) return;
+      Papa.parse(file, {
+        header: true,
+        dynamicTyping: false,
+        skipEmptyLines: true,
+        complete: (res)=>{
+          rawRows = res.data;
+          headers = res.meta.fields || Object.keys(rawRows[0]||{});
+          numericCols = detectNumericCols(rawRows, headers);
+          if(numericCols.length < 2){
+            emptyEl.innerHTML = 'Không đủ cột số để tính tương quan. Hãy kiểm tra CSV.';
+            emptyEl.style.display = 'block';
+            heatmapEl.innerHTML = '';
+            return;
+          }
+          // populate target select
+          targetSel.innerHTML = '<option value="">— chưa chọn —</option>' + numericCols.map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+          // Auto-select target if there is a likely name
+          const guess = numericCols.find(c=>/^(target|label|y)$/i.test(c));
+          if(guess){ targetSel.value = guess; }
+          corr = corrMatrix(rawRows, numericCols);
+          renderHeatmap(numericCols, corr);
+          toggleEmpty(false);
+          btnExport.disabled = false;
+        }
+      });
+    });
+
+    absCk.addEventListener('change', ()=>{
+      renderHeatmap(numericCols, corr);
+      legendEl.classList.toggle('abs', absCk.checked);
+      legendText.textContent = absCk.checked ? 'Trắng: 0 → đỏ: |r| = 1 (chỉ độ lớn, bỏ qua dấu)'
+                                             : 'Màu xanh: âm (−1) → trắng: 0 → đỏ: dương (+1)';
+    });
+
+    targetSel.addEventListener('change', ()=>{
+      // no redraw needed; target chủ yếu dùng cho giải thích/đọc
+      // nhưng ta vẫn giữ như này nếu sau muốn highlight hàng/ cột target.
+    });
+
+    // Export PNG via toDataURL by painting to canvas
+    btnExport.addEventListener('click', ()=>{
+      exportHeatmapPNG();
+    });
+
+    function toggleEmpty(show){
+      emptyEl.style.display = show ? 'block' : 'none';
+      document.getElementById('hmScroller').style.display = show ? 'none' : 'block';
+    }
+
+    function detectNumericCols(rows, cols){
+      // A column is numeric if at least 80% of non-empty values parse as finite numbers
+      const out = [];
+      cols.forEach(col=>{
+        let n=0, ok=0;
+        for(const r of rows){
+          const v = r[col];
+          if(v===undefined || v===null || v==='') continue;
+          n++;
+          const num = parseFloat(v);
+          if(Number.isFinite(num)) ok++;
+        }
+        if(n>0 && (ok/n) >= 0.8) out.push(col);
+      });
+      return out;
+    }
+
+    function corrMatrix(rows, cols){
+      const n = cols.length;
+      const M = Array.from({length:n}, ()=>Array(n).fill(1));
+      for(let i=0;i<n;i++){
+        for(let j=i+1;j<n;j++){
+          const r = pearsonCols(rows, cols[i], cols[j]);
+          M[i][j] = r; M[j][i] = r;
+        }
+      }
+      return M;
+    }
+
+    function pearsonCols(rows, c1, c2){
+      const x=[], y=[];
+      for(const r of rows){
+        const a = parseFloat(r[c1]);
+        const b = parseFloat(r[c2]);
+        if(Number.isFinite(a) && Number.isFinite(b)){
+          x.push(a); y.push(b);
+        }
+      }
+      const n = x.length;
+      if(n<3) return 0; // not enough
+      let sumX=0,sumY=0; for(let i=0;i<n;i++){ sumX+=x[i]; sumY+=y[i]; }
+      const mx = sumX/n, my = sumY/n;
+      let num=0, dx2=0, dy2=0;
+      for(let i=0;i<n;i++){
+        const dx = x[i]-mx; const dy = y[i]-my;
+        num += dx*dy; dx2 += dx*dx; dy2 += dy*dy;
+      }
+      const den = Math.sqrt(dx2*dy2);
+      if(den===0) return 0;
+      let r = num/den;
+      if(!Number.isFinite(r)) r = 0;
+      return Math.max(-1, Math.min(1, r));
+    }
+
+    function renderHeatmap(cols, M){
+      if(!cols || cols.length===0) return;
+      const n = cols.length;
+      const absMode = absCk.checked;
+      heatmapEl.style.gridTemplateColumns = `160px repeat(${n}, minmax(56px, 1fr))`;
+
+      // Build header row (corner + col headers)
+      let html = `<div class="head corner"></div>`;
+      for(let j=0;j<n;j++){
+        html += `<div class="head col" data-col="${j}">${escapeHtml(cols[j])}</div>`;
+      }
+
+      // Rows
+      for(let i=0;i<n;i++){
+        html += `<div class="head row" data-row="${i}">${escapeHtml(cols[i])}</div>`;
+        for(let j=0;j<n;j++){
+          const r = M[i][j];
+          const shown = absMode ? Math.abs(r) : r;
+          const color = absMode ? colorAbs(shown) : colorDiverging(r);
+          const text = formatR(r, absMode);
+          html += `<button class="cell" data-row="${i}" data-col="${j}" style="background:${color}">${text}</button>`;
+        }
+      }
+
+      heatmapEl.innerHTML = html;
+
+      // interactions
+      const cells = heatmapEl.querySelectorAll('.cell');
+      cells.forEach(cell=>{
+        cell.addEventListener('mouseenter', onHover);
+        cell.addEventListener('mousemove', onMove);
+        cell.addEventListener('mouseleave', onLeave);
+        cell.addEventListener('click', onClick);
+        cell.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); onClick.call(cell, e); }});
+      });
+    }
+
+    function onHover(e){
+      const r = +this.dataset.row, c = +this.dataset.col;
+      highlightRC(r,c);
+      const val = getRC(r,c);
+      showTip(e.clientX, e.clientY, r, c, val);
+    }
+    function onMove(e){
+      moveTip(e.clientX, e.clientY);
+    }
+    function onLeave(){
+      clearHighlight(); hideTip();
+    }
+    function onClick(){
+      const r = +this.dataset.row, c = +this.dataset.col;
+      const val = getRC(r,c);
+      explainPick(r,c,val);
+    }
+
+    function getRC(r,c){ return corr[r][c]; }
+
+    function highlightRC(r,c){
+      heatmapEl.querySelectorAll('.cell').forEach(el=>{
+        const rr = +el.dataset.row, cc = +el.dataset.col;
+        el.classList.toggle('highlight', rr===r || cc===c);
+        el.classList.toggle('dim', !(rr===r || cc===c));
+      });
+    }
+    function clearHighlight(){
+      heatmapEl.querySelectorAll('.cell').forEach(el=>{ el.classList.remove('highlight','dim'); });
+    }
+
+    function showTip(x,y,r,c,val){
+      const colNames = numericCols;
+      const nameR = colNames[r], nameC = colNames[c];
+      const absMode = absCk.checked; const absVal = Math.abs(val);
+      const strength = strengthLabel(absVal);
+      tooltip.innerHTML = `<div><strong>${escapeHtml(nameR)}</strong> × <strong>${escapeHtml(nameC)}</strong></div>
+        <div>r = <strong>${val.toFixed(2)}</strong> (${strength})</div>
+        ${absMode?'<div>|r| đang bật → màu thể hiện độ lớn</div>':''}`;
+      tooltip.style.display = 'block';
+      moveTip(x,y);
+    }
+    function moveTip(x,y){
+      const pad = 14; // keep inside viewport
+      const w = 220, h = 70;
+      let left = x + 14, top = y + 14;
+      if(left + w > window.innerWidth - pad) left = x - w - 14;
+      if(top + h > window.innerHeight - pad) top = y - h - 14;
+      tooltip.style.left = left + 'px';
+      tooltip.style.top = top + 'px';
+    }
+    function hideTip(){ tooltip.style.display='none'; }
+
+    function explainPick(r,c,val){
+      const colNames = numericCols;
+      const a = colNames[r], b = colNames[c];
+      const absVal = Math.abs(val);
+      const sign = val>0 ? 'dương (cùng chiều)' : (val<0 ? 'âm (ngược chiều)' : 'gần 0');
+      const strength = strengthLabel(absVal);
+      const isTargetRow = targetSel.value && (a===targetSel.value || b===targetSel.value);
+      const feat = a===targetSel.value ? b : (b===targetSel.value ? a : null);
+      const note = isTargetRow ? `• Khi <strong>${escapeHtml(feat)}</strong> ${val>0? 'tăng' : (val<0? 'tăng' : 'thay đổi')}, <strong>${escapeHtml(targetSel.value)}</strong> có xu hướng ${val>0? 'tăng' : (val<0? 'giảm' : 'không đổi nhiều')} (tuyến tính).`
+                               : '• Đây là tương quan giữa hai feature; cân nhắc đa cộng tuyến khi dùng mô hình.';
+
+      const html = `
+        <div class="badge">${escapeHtml(a)} × ${escapeHtml(b)}</div>
+        <p>r = <strong>${val.toFixed(3)}</strong> · dấu <strong>${sign}</strong> · độ mạnh <strong>${strength}</strong></p>
+        <p>${note}</p>
+        <p style="margin-top:10px">Gợi ý: Kiểm tra scatter plot để xác nhận tuyến tính và outlier. Tương quan cao giữa hai feature ⇒ cân nhắc loại bớt/chuẩn hoá.</p>
+      `;
+      document.getElementById('pick').innerHTML = html;
+    }
+
+    function strengthLabel(a){
+      if(a < 0.2) return 'rất yếu';
+      if(a < 0.4) return 'yếu';
+      if(a < 0.7) return 'vừa';
+      return 'mạnh';
+    }
+
+    function colorDiverging(r){
+      // Map [-1,1] → blue-white-red
+      const t = (r + 1) / 2; // 0..1
+      const r1 = 37, g1 = 86, b1 = 185;   // blue-ish
+      const r2 = 224, g2 = 231, b2 = 239; // white-ish
+      const r3 = 194, g3 = 58,  b3 = 58;  // red-ish
+      const mid = 0.5;
+      let R,G,B;
+      if(t < mid){
+        const k = t/mid;
+        R = lerp(r1,r2,k); G = lerp(g1,g2,k); B = lerp(b1,b2,k);
+      } else {
+        const k = (t-mid)/(1-mid);
+        R = lerp(r2,r3,k); G = lerp(g2,g3,k); B = lerp(b2,b3,k);
+      }
+      return `rgb(${R|0},${G|0},${B|0})`;
+    }
+    function colorAbs(a){
+      // a in [0,1] → white→red
+      const r2 = 224, g2 = 231, b2 = 239; // white-ish
+      const r3 = 194, g3 = 58,  b3 = 58;  // red-ish
+      const R = lerp(r2,r3,a); const G = lerp(g2,g3,a); const B = lerp(b2,b3,a);
+      return `rgb(${R|0},${G|0},${B|0})`;
+    }
+    function lerp(a,b,t){ return a + (b-a)*t; }
+
+    function formatR(r, absMode){
+      return absMode ? `${r<0?'-':''}${Math.abs(r).toFixed(2)}` : r.toFixed(2);
+    }
+
+    function escapeHtml(str){
+      return String(str).replace(/[&<>"]+/g, s=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[s]));
+    }
+
+    // Simple PNG export: render current grid to canvas (approx)
+    function exportHeatmapPNG(){
+      const scroller = document.getElementById('hmScroller');
+      const scale = 2; // retina-ish
+      const rect = scroller.getBoundingClientRect();
+      const canvas = document.createElement('canvas');
+      const width = Math.min(scroller.scrollWidth, 2400);
+      const height = Math.min(scroller.scrollHeight, 1600);
+      canvas.width = width * scale; canvas.height = height * scale;
+      const ctx = canvas.getContext('2d');
+      ctx.scale(scale, scale);
+      ctx.fillStyle = '#0f1620';
+      ctx.fillRect(0,0,width,height);
+
+      // Render cells (approximate, not pixel-perfect but good for quick export)
+      const cells = heatmapEl.querySelectorAll('.head, .cell');
+      cells.forEach(el=>{
+        const r = el.getBoundingClientRect();
+        const x = r.left - rect.left + scroller.scrollLeft;
+        const y = r.top - rect.top + scroller.scrollTop;
+        const w = r.width; const h = r.height;
+        // background
+        const bg = getComputedStyle(el).backgroundColor;
+        ctx.fillStyle = bg; ctx.fillRect(x,y,w,h);
+        // text
+        ctx.fillStyle = '#e7edf6';
+        ctx.font = el.classList.contains('head') ? '700 12px ui-sans-serif' : '12px ui-sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(el.textContent.trim(), x + w/2, y + h/2);
+        // borders
+        ctx.strokeStyle = 'rgba(0,0,0,.25)';
+        ctx.strokeRect(x+0.5,y+0.5,w-1,h-1);
+      });
+
+      const a = document.createElement('a');
+      a.download = 'heatmap.png';
+      a.href = canvas.toDataURL('image/png');
+      a.click();
+    }
+  </script>
+</body>
+</html>
